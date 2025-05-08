@@ -1,10 +1,9 @@
 import logging
-from fastapi import HTTPException, UploadFile
 import base64
-from typing import List
+from fastapi import HTTPException, UploadFile
 from openai import OpenAI
 from com.mhire.app.config.config import Config
-from .food_scanner_schema import FoodAnalysis, NutritionInfo
+from .food_scanner_schema import FoodScanResponse, FoodAnalysis, NutritionInfo
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -22,60 +21,64 @@ class FoodScanner:
 
     async def analyze_food_image(self, image: UploadFile) -> FoodAnalysis:
         try:
+            # Check if file is an image
+            if not image.content_type.startswith('image/'):
+                raise HTTPException(status_code=400, detail="File must be an image")
+                
             # Read and encode image
             image_content = await image.read()
             base64_image = base64.b64encode(image_content).decode('utf-8')
+            
+            # Determine the content type for the data URL
+            content_type = image.content_type  # e.g., "image/jpeg", "image/png"
+            data_url = f"data:{content_type};base64,{base64_image}"
 
-            # Prepare the message for GPT-4 Vision
+            # Prepare the system and user messages
+            system_message = """You are a precise nutritional analysis expert with expertise in visual food recognition.
+            When you see a food image, provide this information in a clear format:
+            
+            1. List of all food items visible in the image
+            2. Nutritional information (calories, protein, carbs, fat)
+            3. Health benefits
+            4. Potential dietary concerns
+            5. Serving suggestions or alternatives
+            
+            Be specific and detailed in your analysis."""
+            
+            user_message = "Analyze this food image and provide nutritional information and dietary insights."
+
+            # Make API call to OpenAI
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {
-                        "role": "system",
-                        "content": """You are a nutritional analysis expert. Analyze the food image and provide:
-                        1. List of identified food items
-                        2. Estimated nutritional information
-                        3. Health benefits
-                        4. Potential concerns
-                        5. Serving suggestions or alternatives"""
-                    },
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "image",
-                                "image_url": f"data:image/jpeg;base64,{base64_image}"
-                            }
-                        ]
-                    }
+                    {"role": "system", "content": system_message},
+                    {"role": "user", "content": [
+                        {"type": "text", "text": user_message},
+                        {"type": "image_url", "image_url": data_url}
+                    ]}
                 ],
-                max_tokens=500
+                max_tokens=800,
+                temperature=0.3
             )
 
-            # Process the response
-            analysis = self._parse_response(response.choices[0].message.content)
-            return analysis
+            # Get the raw response text
+            analysis_text = response.choices[0].message.content.strip()
+            
+            # Create a simplified FoodAnalysis object with text analysis
+            # For food_items, create a placeholder list with one item containing the analysis
+            return FoodAnalysis(
+                food_items=["See detailed analysis below"],
+                nutrition=NutritionInfo(
+                    calories=0.0,  # Placeholder values since we're using raw text
+                    protein=0.0,
+                    carbs=0.0,
+                    fat=0.0
+                ),
+                health_benefits=[analysis_text],  # Put the full analysis text here
+                concerns=[],
+                serving_suggestions=[]
+            )
 
         except Exception as e:
             logger.error(f"Error analyzing food image: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Failed to analyze food image: {str(e)}")
-
-    def _parse_response(self, response_text: str) -> FoodAnalysis:
-        try:
-            # For demonstration, using placeholder values
-            # In production, implement proper parsing of the AI response
-            return FoodAnalysis(
-                food_items=["Example Food 1", "Example Food 2"],
-                nutrition=NutritionInfo(
-                    calories=500.0,
-                    protein=20.0,
-                    carbs=60.0,
-                    fat=15.0
-                ),
-                health_benefits=["Rich in vitamins", "High in fiber"],
-                concerns=["Moderate sodium content"],
-                serving_suggestions=["Consider whole grain alternatives"]
-            )
-        except Exception as e:
-            logger.error(f"Error parsing response: {str(e)}")
-            raise HTTPException(status_code=500, detail=f"Failed to parse analysis: {str(e)}")
