@@ -1,12 +1,35 @@
-config = Config()
-router = APIRouter()
+import logging
 
-feature1_service = Feature2(config)
+from fastapi import APIRouter, HTTPException, UploadFile, File
 
-@router.get("/endpont1-name")
-async def get_endpoint_response():
-    return {"message": "Hello from Feature2' Endpoint1!"}
+from com.mhire.app.services.food_scanner.food_scanner import FoodScanner
+from com.mhire.app.services.food_scanner.food_scanner_schema import FoodScanResponse
 
-@router.post("/endpont2-name")
-async def get_endpoint_response():
-    return {"message": "Hello from Feature2's Endpoint2!"}
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+router = APIRouter(
+    prefix="/food-scanner",
+    tags=["Food Scanner"],
+    responses={404: {"description": "Not found"}}
+)
+
+# Initialize Food Scanner
+food_scanner = FoodScanner()
+
+@router.post("/analyze", response_model=FoodScanResponse)
+async def analyze_food(image: UploadFile = File(...)):
+    """
+    Analyze a food image and return nutritional information
+    """
+    try:
+        if not image.content_type.startswith('image/'):
+            raise HTTPException(status_code=400, detail="File must be an image")
+
+        analysis = await food_scanner.analyze_food_image(image)
+        return FoodScanResponse(success=True, analysis=analysis)
+
+    except Exception as e:
+        logger.error(f"Error in analyze endpoint: {str(e)}")
+        return FoodScanResponse(success=False, error=str(e))

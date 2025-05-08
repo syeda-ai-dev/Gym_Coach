@@ -2,7 +2,7 @@ import logging
 
 from fastapi import APIRouter, HTTPException
 
-from com.mhire.app.services.ai_coach import AICoach
+from com.mhire.app.services.ai_coach.ai_coach import AICoach
 from .ai_coach_schema import ChatRequest, ChatResponse
 
 # Configure logging

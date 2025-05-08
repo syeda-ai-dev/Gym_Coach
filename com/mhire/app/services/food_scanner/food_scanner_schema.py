@@ -1,6 +1,20 @@
-class Feature2Schema(BaseModel):
-    id: Optional[int] = Field(None, description="Unique identifier for the feature1 item")
-    name: str = Field(..., description="Name of the feature1 item")
-    description: Optional[str] = Field(None, description="Description of the feature1 item")
-    created_at: Optional[str] = Field(None, description="Creation timestamp of the feature1 item")
-    updated_at: Optional[str] = Field(None, description="Last update timestamp of the feature1 item")
+from pydantic import BaseModel
+from typing import List, Optional
+
+class NutritionInfo(BaseModel):
+    calories: float
+    protein: float
+    carbs: float
+    fat: float
+
+class FoodAnalysis(BaseModel):
+    food_items: List[str]
+    nutrition: NutritionInfo
+    health_benefits: List[str]
+    concerns: List[str]
+    serving_suggestions: List[str]
+
+class FoodScanResponse(BaseModel):
+    success: bool
+    analysis: Optional[FoodAnalysis] = None
+    error: Optional[str] = None
