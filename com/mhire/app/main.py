@@ -1,7 +1,10 @@
 from fastapi import FastAPI
+from fastapi import status
+
 from fastapi.middleware.cors import CORSMiddleware
-from mhire.com.app.services.ai_coach.ai_coach_router import router as ai_coach_router
-from mhire.com.app.responses.network_responses import NetworkResponse
+from fastapi.responses import PlainTextResponse
+
+from com.mhire.app.services.ai_coach.ai_coach_router import router as ai_coach_router
 
 app = FastAPI(
     title="Gym Coach API",
@@ -18,18 +21,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-network_response = NetworkResponse()
+# Register routers
+app.include_router(ai_coach_router)
 
 # Register routers
 app.include_router(ai_coach_router)
 
-@app.get("/")
+@app.get("/", status_code=status.HTTP_200_OK, response_class=PlainTextResponse)
 async def health_check():
-    """
-    Health check endpoint to verify API is running
-    """
-    return network_response.success_response(
-        http_code=NetworkResponse.HttpStatus.SUCCESS,
-        message="Server is healthy",
-        data={"status": "running"}
-    )
+    return "Server is running and healthy"

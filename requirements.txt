@@ -1,6 +1,9 @@
 fastapi
-uvicorn
+uvicorn[standard]
 python-dotenv
+httpx
 langchain
 langchain-openai
 pydantic
+openai
+typing-extensions
