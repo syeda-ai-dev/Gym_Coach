@@ -3,7 +3,7 @@ import base64
 from fastapi import HTTPException, UploadFile
 from openai import OpenAI
 from com.mhire.app.config.config import Config
-from .food_scanner_schema import FoodScanResponse, FoodAnalysis, NutritionInfo
+from com.mhire.app.services.food_scanner.food_scanner_schema import FoodScanResponse, FoodAnalysis, NutritionInfo
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -21,64 +21,169 @@ class FoodScanner:
 
     async def analyze_food_image(self, image: UploadFile) -> FoodAnalysis:
         try:
-            # Check if file is an image
-            if not image.content_type.startswith('image/'):
-                raise HTTPException(status_code=400, detail="File must be an image")
-                
-            # Read and encode image
+            # Read image content
             image_content = await image.read()
             base64_image = base64.b64encode(image_content).decode('utf-8')
-            
-            # Determine the content type for the data URL
-            content_type = image.content_type  # e.g., "image/jpeg", "image/png"
-            data_url = f"data:{content_type};base64,{base64_image}"
 
-            # Prepare the system and user messages
-            system_message = """You are a precise nutritional analysis expert with expertise in visual food recognition.
-            When you see a food image, provide this information in a clear format:
-            
-            1. List of all food items visible in the image
-            2. Nutritional information (calories, protein, carbs, fat)
-            3. Health benefits
-            4. Potential dietary concerns
-            5. Serving suggestions or alternatives
-            
-            Be specific and detailed in your analysis."""
-            
-            user_message = "Analyze this food image and provide nutritional information and dietary insights."
-
-            # Make API call to OpenAI
+            # Create API request with correct image format
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": system_message},
-                    {"role": "user", "content": [
-                        {"type": "text", "text": user_message},
-                        {"type": "image_url", "image_url": data_url}
-                    ]}
+                    {
+                        "role": "system",
+                        "content": """You are a precise nutritional analysis expert with expertise in visual food recognition.
+                        Analyze the food image and provide detailed information in this specific format:
+
+                        1. Food Items: List all visible food items with portion estimates
+                         2. Nutritional Information:
+                           - Total Calories (kcal)
+                           - Protein (g)
+                           - Carbohydrates (g)
+                           - Fat (g)
+                           - Portion Size
+                        3. Health Benefits: List specific health benefits of the ingredients
+                        4. Potential Concerns: Note any dietary concerns or warnings
+                        5. Serving Suggestions: Provide alternative preparations or complementary foods
+
+                        Be specific and quantitative in your analysis. If exact values aren't possible, 
+                        provide reasonable estimates based on standard serving sizes."""
+                    },
+                   {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "Analyze this food image and provide detailed nutritional information."
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/{image.content_type};base64,{base64_image}"
+                                }
+                            }
+                        ]
+                    }
                 ],
-                max_tokens=800,
-                temperature=0.3
+                max_completion_tokens=1000,
+                temperature=1.0
             )
 
-            # Get the raw response text
+            # Rest of your existing code...
+    
+            # Extract the analysis text
             analysis_text = response.choices[0].message.content.strip()
             
-            # Create a simplified FoodAnalysis object with text analysis
-            # For food_items, create a placeholder list with one item containing the analysis
+            # Parse the response to extract structured information
+            parsed_info = self._parse_analysis(analysis_text)
+            
             return FoodAnalysis(
-                food_items=["See detailed analysis below"],
+                food_items=parsed_info["food_items"],
                 nutrition=NutritionInfo(
-                    calories=0.0,  # Placeholder values since we're using raw text
-                    protein=0.0,
-                    carbs=0.0,
-                    fat=0.0
+                    calories=parsed_info["calories"],
+                    protein=parsed_info["protein"],
+                    carbs=parsed_info["carbs"],
+                    fat=parsed_info["fat"],
+                    portion_size=parsed_info["portion_size"]
                 ),
-                health_benefits=[analysis_text],  # Put the full analysis text here
-                concerns=[],
-                serving_suggestions=[]
+                health_benefits=parsed_info["health_benefits"],
+                concerns=parsed_info["concerns"],
+                serving_suggestions=parsed_info["serving_suggestions"],
+                detailed_analysis=analysis_text
             )
 
         except Exception as e:
             logger.error(f"Error analyzing food image: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Failed to analyze food image: {str(e)}")
+
+    def _parse_analysis(self, text: str) -> dict:
+        """Parse the AI response into structured data"""
+        lines = text.split('\n')
+        result = {
+            "food_items": [],
+            "calories": 0.0,
+            "protein": 0.0,
+            "carbs": 0.0,
+            "fat": 0.0,
+            "portion_size": "Standard serving",
+            "health_benefits": [],
+            "concerns": [],
+            "serving_suggestions": []
+        }
+    
+        current_section = None
+        buffer = []
+    
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            
+            lower_line = line.lower()
+        
+            # Section headers
+            if "1. food items" in lower_line:
+                current_section = "food_items"
+                continue
+            elif "2. nutritional information" in lower_line:
+                current_section = "nutrition"
+                continue
+            elif "3. health benefits" in lower_line:
+                current_section = "health_benefits"
+                continue
+            elif "4. potential concerns" in lower_line:
+                current_section = "concerns"
+                continue
+            elif "5. serving suggestions" in lower_line:
+                current_section = "serving_suggestions"
+                continue
+            
+            # Parse content based on section
+            if current_section == "food_items":
+                if line.startswith('-') or line.startswith('•'):
+                    result["food_items"].append(line.lstrip('- •').strip())
+                
+            elif current_section == "nutrition":
+                if "calories" in lower_line:
+                    try:
+                        value = ''.join(filter(str.isdigit, line))
+                        if value:
+                            result["calories"] = float(value)
+                    except ValueError:
+                        pass
+                elif "protein" in lower_line:
+                    try:
+                        value = ''.join(filter(str.isdigit, line))
+                        if value:
+                            result["protein"] = float(value)
+                    except ValueError:
+                        pass
+                elif "carbohydrate" in lower_line or "carbs" in lower_line:
+                    try:
+                        value = ''.join(filter(str.isdigit, line))
+                        if value:
+                            result["carbs"] = float(value)
+                    except ValueError:
+                        pass
+                elif "fat" in lower_line:
+                    try:
+                        value = ''.join(filter(str.isdigit, line))
+                        if value:
+                            result["fat"] = float(value)
+                    except ValueError:
+                        pass
+                elif "portion" in lower_line:
+                    result["portion_size"] = line.split(':')[-1].strip()
+                    
+            elif current_section == "health_benefits":
+                if line.startswith('-') or line.startswith('•'):
+                    result["health_benefits"].append(line.lstrip('- •').strip())
+                
+            elif current_section == "concerns":
+                if line.startswith('-') or line.startswith('•'):
+                    result["concerns"].append(line.lstrip('- •').strip())
+                
+            elif current_section == "serving_suggestions":
+                if line.startswith('-') or line.startswith('•'):
+                    result["serving_suggestions"].append(line.lstrip('- •').strip())
+
+        return result

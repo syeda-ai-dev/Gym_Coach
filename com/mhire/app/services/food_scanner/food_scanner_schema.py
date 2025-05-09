@@ -6,6 +6,7 @@ class NutritionInfo(BaseModel):
     protein: float
     carbs: float
     fat: float
+    portion_size: Optional[str] = None
 
 class FoodAnalysis(BaseModel):
     food_items: List[str]
@@ -13,6 +14,7 @@ class FoodAnalysis(BaseModel):
     health_benefits: List[str]
     concerns: List[str]
     serving_suggestions: List[str]
+    detailed_analysis: str
 
 class FoodScanResponse(BaseModel):
     success: bool

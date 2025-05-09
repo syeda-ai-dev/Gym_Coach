@@ -1,6 +1,6 @@
 import logging
 from fastapi import APIRouter, HTTPException, UploadFile, File
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse
 
 from com.mhire.app.services.food_scanner.food_scanner import FoodScanner
 from com.mhire.app.services.food_scanner.food_scanner_schema import FoodScanResponse
@@ -18,22 +18,28 @@ router = APIRouter(
 # Initialize Food Scanner
 food_scanner = FoodScanner()
 
-@router.post("/analyze")
+@router.post("/analyze", response_model=FoodScanResponse)
 async def analyze_food(image: UploadFile = File(...)):
     """
-    Analyze a food image and return nutritional information
+    Analyze a food image and return detailed nutritional information including:
+    - Food items identified
+    - Nutritional content (calories, protein, carbs, fat)
+    - Health benefits
+    - Potential concerns
+    - Serving suggestions
     """
     try:
         if not image.content_type.startswith('image/'):
             raise HTTPException(status_code=400, detail="File must be an image")
 
         analysis = await food_scanner.analyze_food_image(image)
-        
-        # Extract the raw analysis text from the health_benefits field where we stored it
-        raw_analysis = analysis.health_benefits[0] if analysis.health_benefits else "No analysis available"
-        
-        # Return the raw text directly
-        return JSONResponse(content={"success": True, "analysis": raw_analysis})
+        return FoodScanResponse(
+            success=True,
+            analysis=analysis
+        )
     except Exception as e:
         logger.error(f"Error in analyze endpoint: {str(e)}")
-        return JSONResponse(content={"success": False, "error": str(e)}, status_code=500)
+        return FoodScanResponse(
+            success=False,
+            error=str(e)
+        )
