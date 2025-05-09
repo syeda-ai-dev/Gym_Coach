@@ -17,7 +17,7 @@ class MealPlanner:
             self.llm = ChatOpenAI(
                 openai_api_key=config.openai_api_key,
                 model=config.model_name,
-                temperature=0.2  # Lower temperature for more consistent formatting
+                temperature=1  # Lower temperature for more consistent formatting
             )
         except Exception as e:
             logger.error(f"Error initializing MealPlanner: {str(e)}")

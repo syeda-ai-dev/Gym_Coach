@@ -7,3 +7,6 @@ langchain-openai
 pydantic
 openai
 typing-extensions
+python-multipart
+pillow
+tavily-python

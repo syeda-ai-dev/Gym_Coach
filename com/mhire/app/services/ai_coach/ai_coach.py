@@ -18,7 +18,7 @@ class AICoach:
             self.llm = ChatOpenAI(
                 openai_api_key=config.openai_api_key,
                 model=config.model_name,
-                temperature=0.7
+                temperature=1
             )
         except Exception as e:
             logger.error(f"Error initializing AICoach: {str(e)}")
