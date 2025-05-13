@@ -10,3 +10,6 @@ typing-extensions
 python-multipart
 pillow
 tavily-python
+streamlit
+numpy
+pandas

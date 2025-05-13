@@ -1,4 +1,5 @@
 import logging
+import re
 import base64
 from fastapi import HTTPException, UploadFile
 from openai import OpenAI
@@ -23,58 +24,93 @@ class FoodScanner:
         try:
             # Read image content
             image_content = await image.read()
+            
+            # Get image type - if content_type not available, default to jpeg
+            content_type = image.content_type if image.content_type else "image/jpeg"
+            
+            # Ensure the content type is correctly formatted
+            if "/" not in content_type:
+                content_type = f"image/{content_type}"
+            
+            # Generate base64 encoding of the image
             base64_image = base64.b64encode(image_content).decode('utf-8')
+            
+            # Log diagnostic info
+            logger.info(f"Processing image with content type: {content_type}")
+            logger.info(f"Image size: {len(image_content)} bytes")
+            
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": """You are a professional nutritionist and food analyst specializing in visual food analysis. For ANY food image (simple or complex):
 
-            # Create API request with correct image format
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": """You are a precise nutritional analysis expert with expertise in visual food recognition.
-                        Analyze the food image and provide detailed information in this specific format:
+                            1. First, identify ALL ingredients and components
+                            2. Then, considering the COMPLETE dish, provide TOTAL nutritional values
+                            3. Follow this EXACT format:
 
-                        1. Food Items: List all visible food items with portion estimates
-                         2. Nutritional Information:
-                           - Total Calories (kcal)
-                           - Protein (g)
-                           - Carbohydrates (g)
-                           - Fat (g)
-                           - Portion Size
-                        3. Health Benefits: List specific health benefits of the ingredients
-                        4. Potential Concerns: Note any dietary concerns or warnings
-                        5. Serving Suggestions: Provide alternative preparations or complementary foods
+                            FOOD ITEMS AND INGREDIENTS:
+                            - [Dish name]
+                            - [List all visible ingredients]
+                            - [List garnishes/sides if any]
 
-                        Be specific and quantitative in your analysis. If exact values aren't possible, 
-                        provide reasonable estimates based on standard serving sizes."""
-                    },
-                   {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": "Analyze this food image and provide detailed nutritional information."
-                            },
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/{image.content_type};base64,{base64_image}"
+                            TOTAL NUTRITIONAL VALUES:
+                            Calories: [X] kcal
+                            Protein: [X] g
+                            Carbohydrates: [X] g
+                            Fat: [X] g
+
+                            HEALTH BENEFITS:
+                            - [List key benefits]
+
+                            DIETARY CONCERNS:
+                            - [List allergens or concerns]
+
+                            IMPORTANT RULES:
+                            - ALWAYS analyze the COMPLETE dish
+                            - ALWAYS provide numerical values
+                            - If exact values unknown, provide educated estimates
+                            - Keep responses focused and concise
+                            - For complex dishes, provide ONE total nutritional value"""
+                        },
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "Analyze this food image and provide total nutritional values. If exact values are unknown, provide your best estimates based on visual analysis."
+                                },
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": f"data:{content_type};base64,{base64_image}"
+                                    }
                                 }
-                            }
-                        ]
-                    }
-                ],
-                max_completion_tokens=1000,
-                temperature=1.0
-            )
-
-            # Rest of your existing code...
-    
+                            ]
+                        }
+                    ],
+                )
+            except Exception as api_error:
+                logger.error(f"OpenAI API error: {str(api_error)}")
+                raise HTTPException(status_code=500, detail=f"Error calling OpenAI API: {str(api_error)}")
+            
             # Extract the analysis text
             analysis_text = response.choices[0].message.content.strip()
             
+            if not analysis_text:
+                raise HTTPException(status_code=500, detail="Food analysis returned empty results")
+            
+            # Log the first part of the raw analysis text for debugging
+            logger.info(f"Raw analysis text (first 200 chars): {analysis_text[:200]}...")
+            
             # Parse the response to extract structured information
             parsed_info = self._parse_analysis(analysis_text)
+            
+            # Additional validation to ensure we have values
+            if parsed_info["calories"] == 0 or parsed_info["protein"] == 0:
+                raise HTTPException(status_code=500, detail="Failed to extract nutritional values from analysis")
             
             return FoodAnalysis(
                 food_items=parsed_info["food_items"],
@@ -82,108 +118,98 @@ class FoodScanner:
                     calories=parsed_info["calories"],
                     protein=parsed_info["protein"],
                     carbs=parsed_info["carbs"],
-                    fat=parsed_info["fat"],
-                    portion_size=parsed_info["portion_size"]
+                    fat=parsed_info["fat"]
                 ),
                 health_benefits=parsed_info["health_benefits"],
-                concerns=parsed_info["concerns"],
-                serving_suggestions=parsed_info["serving_suggestions"],
-                detailed_analysis=analysis_text
+                concerns=parsed_info["concerns"]
             )
-
         except Exception as e:
             logger.error(f"Error analyzing food image: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Failed to analyze food image: {str(e)}")
 
     def _parse_analysis(self, text: str) -> dict:
-        """Parse the AI response into structured data"""
-        lines = text.split('\n')
+        """Parse the AI response with improved nutrition value extraction"""    
         result = {
             "food_items": [],
             "calories": 0.0,
             "protein": 0.0,
             "carbs": 0.0,
             "fat": 0.0,
-            "portion_size": "Standard serving",
             "health_benefits": [],
-            "concerns": [],
-            "serving_suggestions": []
+            "concerns": []
         }
-    
+        
+        # Split text into sections using headers
+        sections = {}
         current_section = None
-        buffer = []
-    
-        for line in lines:
+        
+        for line in text.split('\n'):
             line = line.strip()
             if not line:
                 continue
             
+            # Detect section headers
             lower_line = line.lower()
-        
-            # Section headers
-            if "1. food items" in lower_line:
-                current_section = "food_items"
-                continue
-            elif "2. nutritional information" in lower_line:
+            if "food items and ingredients:" in lower_line:
+                current_section = "items"
+            elif "total nutritional values" in lower_line:
                 current_section = "nutrition"
-                continue
-            elif "3. health benefits" in lower_line:
-                current_section = "health_benefits"
-                continue
-            elif "4. potential concerns" in lower_line:
+            elif "health benefits:" in lower_line:
+                current_section = "benefits"
+            elif "dietary concerns:" in lower_line:
                 current_section = "concerns"
-                continue
-            elif "5. serving suggestions" in lower_line:
-                current_section = "serving_suggestions"
-                continue
             
-            # Parse content based on section
-            if current_section == "food_items":
-                if line.startswith('-') or line.startswith('•'):
-                    result["food_items"].append(line.lstrip('- •').strip())
-                
-            elif current_section == "nutrition":
-                if "calories" in lower_line:
-                    try:
-                        value = ''.join(filter(str.isdigit, line))
-                        if value:
-                            result["calories"] = float(value)
-                    except ValueError:
-                        pass
-                elif "protein" in lower_line:
-                    try:
-                        value = ''.join(filter(str.isdigit, line))
-                        if value:
-                            result["protein"] = float(value)
-                    except ValueError:
-                        pass
-                elif "carbohydrate" in lower_line or "carbs" in lower_line:
-                    try:
-                        value = ''.join(filter(str.isdigit, line))
-                        if value:
-                            result["carbs"] = float(value)
-                    except ValueError:
-                        pass
-                elif "fat" in lower_line:
-                    try:
-                        value = ''.join(filter(str.isdigit, line))
-                        if value:
-                            result["fat"] = float(value)
-                    except ValueError:
-                        pass
-                elif "portion" in lower_line:
-                    result["portion_size"] = line.split(':')[-1].strip()
-                    
-            elif current_section == "health_benefits":
-                if line.startswith('-') or line.startswith('•'):
-                    result["health_benefits"].append(line.lstrip('- •').strip())
-                
-            elif current_section == "concerns":
-                if line.startswith('-') or line.startswith('•'):
-                    result["concerns"].append(line.lstrip('- •').strip())
-                
-            elif current_section == "serving_suggestions":
-                if line.startswith('-') or line.startswith('•'):
-                    result["serving_suggestions"].append(line.lstrip('- •').strip())
-
+            # Add content to sections
+            if current_section and current_section not in sections:
+                sections[current_section] = []
+            if current_section:
+                sections[current_section].append(line)
+        
+        # Process food items
+        if "items" in sections:
+            for line in sections["items"]:
+                if line.strip().startswith(("-", "•", "*", "○")):
+                    item = line.lstrip("- •*○").strip()
+                    if item and not any(x.lower() in item.lower() for x in ["food items", "ingredients"]):
+                        result["food_items"].append(item)
+        
+        # Process nutrition values
+        if "nutrition" in sections:
+            for line in sections["nutrition"]:
+                if ":" in line:
+                    key, value = [x.strip() for x in line.split(":", 1)]
+                    key = key.lower()
+                    if "calories" in key:
+                        result["calories"] = self._extract_number(value)
+                    elif "protein" in key:
+                        result["protein"] = self._extract_number(value)
+                    elif "carbs" in key or "carbohydrates" in key:
+                        result["carbs"] = self._extract_number(value)
+                    elif "fat" in key:
+                        result["fat"] = self._extract_number(value)
+        
+        # Process other sections
+        if "benefits" in sections:
+            for line in sections["benefits"]:
+                if line.strip().startswith(("-", "•", "*", "○")):
+                    benefit = line.lstrip("- •*○").strip()
+                    if benefit:
+                        result["health_benefits"].append(benefit)
+        
+        if "concerns" in sections:
+            for line in sections["concerns"]:
+                if line.strip().startswith(("-", "•", "*", "○")):
+                    concern = line.lstrip("- •*○").strip()
+                    if concern:
+                        result["concerns"].append(concern)
+        
+        # Validate nutritional values
+        if result["calories"] == 0 or result["protein"] == 0 or result["carbs"] == 0 or result["fat"] == 0:
+            raise ValueError("Failed to extract complete nutritional information from the analysis")
+        
         return result
+
+    def _extract_number(self, text: str) -> float:
+        """Extract the first number from text, handling various formats"""
+        matches = re.findall(r'(\d+(?:\.\d+)?)', text)
+        return float(matches[0]) if matches else 0.0
