@@ -1,4 +1,6 @@
-version: '3.12'
+networks:
+  app-network:
+    driver: bridge
 
 services:
   app:
@@ -9,11 +11,9 @@ services:
     expose:
       - '8052'
     env_file:
-      - .env # This will load variables from .env
-    # Or specify individual environment variables:
-    # environment:
-    #   - DATABASE_URL=postgres://user:pass@db:5432/dbname
-    #   - SECRET_KEY=your_secret_key
+      - .env
+    networks:
+      - app-network
 
   nginx:
     image: nginx:alpine
@@ -21,7 +21,7 @@ services:
     ports:
       - '0.0.0.0:8052:80'
     networks:
-      - default
+      - app-network
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
